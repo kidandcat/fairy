@@ -1,0 +1,43 @@
+{
+  "name": "fairy2",
+  "displayName": "fairy2",
+  "description": "",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.92.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "fairy2.fairy",
+        "title": "Fairy"
+      }
+    ]
+  },
+  "scripts": {
+    "lint": "eslint .",
+    "pretest": "npm run lint",
+    "test": "vscode-test"
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.7",
+    "@types/node": "20.x",
+    "@types/vscode": "^1.92.0",
+    "@vscode/test-cli": "^0.0.9",
+    "@vscode/test-electron": "^2.4.0",
+    "eslint": "^8.57.0",
+    "typescript": "^5.4.5"
+  },
+  "dependencies": {
+    "@picovoice/pvrecorder-node": "^1.2.3",
+    "@ricky0123/vad-node": "^0.0.3",
+    "node-microphone": "^0.1.6",
+    "openai": "^4.56.0",
+    "speech-recorder": "^2.1.0"
+  }
+}
