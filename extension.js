@@ -9,13 +9,12 @@ const openai = new OpenAI({
 
 const DEBUG = 'multiplica width y height por dos'
 
+var statusBarItem
+
 /**
  * @param {vscode.ExtensionContext} context
  */
 function activate(context) {
-	console.log('Congratulations, your extension "fairy2" is now active!');
-	// createAssistant()
-
 	const disposable = vscode.commands.registerCommand('fairy2.fairy', function () {
 		var activeEditor = vscode.window.activeTextEditor
 		if (!activeEditor) {
@@ -25,8 +24,14 @@ function activate(context) {
 		var content = activeEditor.document.getText()
 		run_assistant(filename, content)
 	});
-
 	context.subscriptions.push(disposable);
+
+	// create a new status bar item that we can now manage
+	statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
+	statusBarItem.command = 'fairy2.fairy';
+	statusBarItem.text = 'Fairy ready';
+	statusBarItem.show();
+	context.subscriptions.push(statusBarItem);
 }
 
 function deactivate() { }
@@ -68,12 +73,12 @@ async function run_assistant(filename, content) {
 			DeleteLines(),
 			FocusLines(),
 		],
-	}).on('functionCall', (functionCall) => console.log('functionCall', functionCall));
+	}).on('functionCall', (functionCall) => console.log('functionCall', functionCall))
 
 	try {
-		console.log(await runner.totalUsage());
+		await runner.done();
 	} catch (e) {
-		console.log('finalChatCompletion Error:', e);
+		console.log('done Error:', e);
 	}
 }
 
@@ -109,12 +114,12 @@ function ReplaceCodeAtLine() {
 				},
 			},
 			function: async ({ line, code }) => {
+				const start = new vscode.Position(line, 0)
+				const end = new vscode.Position(line + 1, 0)
 				await vscode.window.activeTextEditor.edit(editBuilder => {
-					const start = new vscode.Position(line, 0)
-					const end = new vscode.Position(line + 1, 0)
 					editBuilder.replace(new vscode.Range(start, end), code + '\n')
-					vscode.window.showInformationMessage("Replaced code at line " + line)
 				})
+				statusBarItem.text = "Replaced code at line " + line
 				const content = vscode.window.activeTextEditor.document.getText()
 				return vscode.window.activeTextEditor.document.uri + ':\n' + add_lines(content)
 			},
@@ -133,10 +138,11 @@ function Save() {
 				type: 'object',
 				properties: {},
 			},
-			function: () => new Promise((resolve) => {
-				vscode.window.activeTextEditor.document.save()
-				resolve('Saved file ' + vscode.window.activeTextEditor.document.uri)
-			}),
+			function: async () => {
+				await vscode.window.activeTextEditor.document.save()
+				statusBarItem.text = "Saved file"
+				return 'Saved file ' + vscode.window.activeTextEditor.document.uri
+			},
 		},
 	};
 }
@@ -161,16 +167,16 @@ function DeleteLines() {
 					},
 				},
 			},
-			function: ({ start, end }) => new Promise((resolve) => {
-				vscode.window.activeTextEditor.edit(editBuilder => {
-					const startPos = new vscode.Position(start, 0)
-					const endPos = new vscode.Position(end, 0)
+			function: async ({ start, end }) => {
+				const startPos = new vscode.Position(start + 1, 0)
+				const endPos = new vscode.Position(end + 1, 0)
+				await vscode.window.activeTextEditor.edit(editBuilder => {
 					editBuilder.delete(new vscode.Range(startPos, endPos))
-					vscode.window.showInformationMessage("Deleted lines " + startPos + " to " + endPos)
-					const content = vscode.window.activeTextEditor.document.getText()
-					resolve(vscode.window.activeTextEditor.document.uri + ':\n' + add_lines(content))
 				})
-			}),
+				statusBarItem.text = "Deleted lines " + start + 1 + " to " + end + 1
+				const content = vscode.window.activeTextEditor.document.getText()
+				return vscode.window.activeTextEditor.document.uri + ':\n' + add_lines(content)
+			},
 		},
 	};
 }
@@ -195,10 +201,11 @@ function FocusLines() {
 					},
 				},
 			},
-			function: ({ start, end }) => new Promise((resolve) => {
-				vscode.window.activeTextEditor.selection = new vscode.Selection(start, 0, end, 0)
-				resolve('Focused on lines ' + start + ' to ' + end)
-			}),
+			function: ({ start, end }) => {
+				vscode.window.activeTextEditor.revealRange(new vscode.Range(start + 1, 0, end + 1, 0), vscode.TextEditorRevealType.InCenter)
+				statusBarItem.text = "Focused on lines " + start + 1 + " to " + end + 1
+				return 'Focused on lines ' + start + 1 + ' to ' + end + 1
+			},
 		},
 	};
 }
@@ -218,7 +225,7 @@ async function listen_input() {
 		const recorder = new SpeechRecorder({
 			consecutiveFramesForSpeaking: 10,
 			onChunkStart: () => {
-				vscode.window.showInformationMessage("Listening...")
+				statusBarItem.text = "Listening..."
 			},
 			onAudio: ({ audio, speech }) => {
 				if (speech) {
@@ -228,7 +235,7 @@ async function listen_input() {
 			},
 			onChunkEnd: async () => {
 				recorder.stop()
-				vscode.window.showInformationMessage("Processing...")
+				statusBarItem.text = "Processing..."
 				const audioBuffer = Buffer.concat(data);
 				const wavBuffer = convertRawToWav(audioBuffer);
 				const transcription = await openai.audio.transcriptions.create({
@@ -239,7 +246,7 @@ async function listen_input() {
 				resolve(transcription.text)
 			}
 		})
-		vscode.window.showInformationMessage("Ready to listen")
+		statusBarItem.text = "Ready to listen"
 		recorder.start()
 	});
 }
