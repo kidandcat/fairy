@@ -7,7 +7,7 @@ const openai = new OpenAI({
 	apiKey: process.env.OPENAI_API_KEY,
 });
 
-const DEBUG = 'multiplica width y height por dos'
+const DEBUG = ''
 
 var statusBarItem
 
@@ -15,14 +15,15 @@ var statusBarItem
  * @param {vscode.ExtensionContext} context
  */
 function activate(context) {
-	const disposable = vscode.commands.registerCommand('fairy2.fairy', function () {
+	const disposable = vscode.commands.registerCommand('fairy2.fairy', async function () {
 		var activeEditor = vscode.window.activeTextEditor
 		if (!activeEditor) {
 			return
 		}
 		var filename = activeEditor.document.uri
 		var content = activeEditor.document.getText()
-		run_assistant(filename, content)
+		await run_assistant(filename, content)
+		statusBarItem.text = 'Fairy ready';
 	});
 	context.subscriptions.push(disposable);
 
@@ -73,7 +74,10 @@ async function run_assistant(filename, content) {
 			DeleteLines(),
 			FocusLines(),
 		],
-	}).on('functionCall', (functionCall) => console.log('functionCall', functionCall))
+	}).on('functionCall', (functionCall) => {
+		console.log('functionCall:', functionCall.name);
+		vscode.window.showInformationMessage('Calling function: ' + functionCall.name);
+	})
 
 	try {
 		await runner.done();
@@ -186,7 +190,7 @@ function FocusLines() {
 		type: 'function',
 		function: {
 			name: 'FocusLines',
-			description: 'Focus on a range of lines',
+			description: 'Show a range of lines at the center of the screen',
 			parse: JSON.parse,
 			parameters: {
 				type: 'object',
@@ -202,8 +206,8 @@ function FocusLines() {
 				},
 			},
 			function: ({ start, end }) => {
+				statusBarItem.text = "Focusing on lines " + start + 1 + " to " + end + 1
 				vscode.window.activeTextEditor.revealRange(new vscode.Range(start + 1, 0, end + 1, 0), vscode.TextEditorRevealType.InCenter)
-				statusBarItem.text = "Focused on lines " + start + 1 + " to " + end + 1
 				return 'Focused on lines ' + start + 1 + ' to ' + end + 1
 			},
 		},
@@ -227,11 +231,8 @@ async function listen_input() {
 			onChunkStart: () => {
 				statusBarItem.text = "Listening..."
 			},
-			onAudio: ({ audio, speech }) => {
-				if (speech) {
-					let buffer = Buffer.from(audio.buffer);
-					data.push(buffer);
-				}
+			onAudio: ({ audio }) => {
+				data.push(Buffer.from(audio.buffer));
 			},
 			onChunkEnd: async () => {
 				recorder.stop()
