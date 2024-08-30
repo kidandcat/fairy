@@ -76,10 +76,11 @@ async function run_assistant(filename, content) {
 			FindFiles(),
 			OpenFile(),
 			Diagnostic(),
+			Response(),
 		],
 	}).on('functionCall', (functionCall) => {
-		console.log('functionCall:', functionCall.name);
-		vscode.window.showInformationMessage('Calling function: ' + functionCall.name);
+		console.log('functionCall:', functionCall);
+		vscode.window.showInformationMessage(functionCall.name + '(' + functionCall.arguments + ')');
 	})
 
 	try {
@@ -87,6 +88,15 @@ async function run_assistant(filename, content) {
 	} catch (e) {
 		console.log('done Error:', e);
 	}
+}
+
+function content() {
+	var content = vscode.window.activeTextEditor.document.getText()
+	var focusedLine = vscode.window.activeTextEditor.selection.active.line
+	var startLine = Math.max(0, focusedLine - 400000)
+	var endLine = Math.min(vscode.window.activeTextEditor.document.lineCount - 1, focusedLine + 400000)
+	var croppedContent = content.split('\n').slice(startLine, endLine + 1).join('\n')
+	return add_lines(croppedContent)
 }
 
 ///////////
@@ -127,8 +137,7 @@ function ReplaceCodeAtLine() {
 					editBuilder.replace(new vscode.Range(start, end), code + '\n')
 				})
 				statusBarItem.text = "Replaced code at line " + line
-				const content = vscode.window.activeTextEditor.document.getText()
-				return vscode.window.activeTextEditor.document.uri + ':\n' + add_lines(content)
+				return vscode.window.activeTextEditor.document.uri + ':\n' + content()
 			},
 		},
 	};
@@ -181,8 +190,7 @@ function DeleteLines() {
 					editBuilder.delete(new vscode.Range(startPos, endPos))
 				})
 				statusBarItem.text = "Deleted lines " + start + 1 + " to " + end + 1
-				const content = vscode.window.activeTextEditor.document.getText()
-				return vscode.window.activeTextEditor.document.uri + ':\n' + add_lines(content)
+				return vscode.window.activeTextEditor.document.uri + ':\n' + content()
 			},
 		},
 	};
@@ -230,7 +238,13 @@ function ListFiles() {
 			},
 			function: () => {
 				const files = vscode.workspace.textDocuments.map(doc => doc.uri.toString())
-				return files.join('\n')
+				var files_list = files.join('\n')
+				if (files_list.length > 1000000) {
+					files_list = files_list.substring(0, 1000000)
+				}
+				statusBarItem.text = "Listed files"
+				console.log('ListFiles():', files_list);
+				return files_list
 			},
 		},
 	};
@@ -248,13 +262,21 @@ function FindFiles() {
 				properties: {
 					pattern: {
 						type: 'string',
-						description: 'Glob pattern to search for',
+						description: 'A glob pattern that defines the files to search for. Example: **/*.txt',
 					},
 				},
 			},
-			function: ({pattern}) => {
-				const files = vscode.workspace.findFiles(pattern)
-				return files.map(file => file.toString())
+			function: async ({ pattern }) => {
+				const files = await vscode.workspace.findFiles(pattern)
+				var files_list = files.map(file => file.toString()).join('\n')
+				if (files_list.length > 1000000) {
+					files_list = files_list.substring(0, 1000000)
+				}
+				statusBarItem.text = "FindFiles"
+				console.log({workspaceFolders: vscode.workspace.workspaceFolders});
+				console.log(`Files found with pattern '${pattern}':`, files.length, files);
+				console.log('FindFiles('+pattern+'):', files_list);
+				return files_list
 			},
 		},
 	};
@@ -276,9 +298,10 @@ function OpenFile() {
 					},
 				},
 			},
-			function: ({uri}) => {
+			function: async ({ uri }) => {
 				const file = vscode.Uri.parse(uri)
 				vscode.window.showTextDocument(file)
+				console.log('OpenFile('+uri+'):', 'Opened file ' + uri);
 				return 'Opened file ' + uri
 			},
 		},
@@ -304,6 +327,29 @@ function Diagnostic() {
 	};
 }
 
+function Response() {
+	return {
+		type: 'function',
+		function: {
+			name: 'Response',
+			description: 'Tell something to the user',
+			parse: JSON.parse,
+			parameters: {
+				type: 'object',
+				properties: {
+					response: {
+						type: 'string',
+						description: 'Text to tell the user',
+					},
+				},
+			},
+			function: async ({ response }) => {
+				vscode.window.showInformationMessage(response)
+				return 'Told user: ' + response
+			},
+		},
+	};
+}
 
 /////////////////
 // AUDIO INPUT //
