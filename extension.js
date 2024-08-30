@@ -243,7 +243,6 @@ function ListFiles() {
 					files_list = files_list.substring(0, 1000000)
 				}
 				statusBarItem.text = "Listed files"
-				console.log('ListFiles():', files_list);
 				return files_list
 			},
 		},
@@ -273,9 +272,6 @@ function FindFiles() {
 					files_list = files_list.substring(0, 1000000)
 				}
 				statusBarItem.text = "FindFiles"
-				console.log({workspaceFolders: vscode.workspace.workspaceFolders});
-				console.log(`Files found with pattern '${pattern}':`, files.length, files);
-				console.log('FindFiles('+pattern+'):', files_list);
 				return files_list
 			},
 		},
@@ -299,10 +295,15 @@ function OpenFile() {
 				},
 			},
 			function: async ({ uri }) => {
-				const file = vscode.Uri.parse(uri)
-				vscode.window.showTextDocument(file)
-				console.log('OpenFile('+uri+'):', 'Opened file ' + uri);
-				return 'Opened file ' + uri
+				try {
+					const file = vscode.Uri.parse(uri)
+					await vscode.window.showTextDocument(file)
+					console.log('OpenFile(' + uri + '):', 'Opened file ' + uri);
+					return 'Opened file ' + uri
+				} catch (e) {
+					console.log('OpenFile(' + uri + '):', 'Error opening file ' + uri, e);
+					return e.toString()
+				}
 			},
 		},
 	};
