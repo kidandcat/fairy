@@ -67,12 +67,15 @@ async function run_assistant(filename, content) {
 	const runner = openai.beta.chat.completions.runTools({
 		messages: messages,
 		model: 'gpt-4o-mini',
-		// tool_choice: 'required',
 		tools: [
 			ReplaceCodeAtLine(),
 			Save(),
 			DeleteLines(),
 			FocusLines(),
+			ListFiles(),
+			FindFiles(),
+			OpenFile(),
+			Diagnostic(),
 		],
 	}).on('functionCall', (functionCall) => {
 		console.log('functionCall:', functionCall.name);
@@ -209,6 +212,93 @@ function FocusLines() {
 				statusBarItem.text = "Focusing on lines " + start + 1 + " to " + end + 1
 				vscode.window.activeTextEditor.revealRange(new vscode.Range(start + 1, 0, end + 1, 0), vscode.TextEditorRevealType.InCenter)
 				return 'Focused on lines ' + start + 1 + ' to ' + end + 1
+			},
+		},
+	};
+}
+
+function ListFiles() {
+	return {
+		type: 'function',
+		function: {
+			name: 'ListFiles',
+			description: 'List files in the current workspace',
+			parse: JSON.parse,
+			parameters: {
+				type: 'object',
+				properties: {},
+			},
+			function: () => {
+				const files = vscode.workspace.textDocuments.map(doc => doc.uri.toString())
+				return files.join('\n')
+			},
+		},
+	};
+}
+
+function FindFiles() {
+	return {
+		type: 'function',
+		function: {
+			name: 'FindFiles',
+			description: 'Find files in the current workspace based on a provided glob pattern',
+			parse: JSON.parse,
+			parameters: {
+				type: 'object',
+				properties: {
+					pattern: {
+						type: 'string',
+						description: 'Glob pattern to search for',
+					},
+				},
+			},
+			function: ({pattern}) => {
+				const files = vscode.workspace.findFiles(pattern)
+				return files.map(file => file.toString())
+			},
+		},
+	};
+}
+
+function OpenFile() {
+	return {
+		type: 'function',
+		function: {
+			name: 'OpenFile',
+			description: 'Open a file in the editor based on a provided uri',
+			parse: JSON.parse,
+			parameters: {
+				type: 'object',
+				properties: {
+					uri: {
+						type: 'string',
+						description: 'Uri of the file to open',
+					},
+				},
+			},
+			function: ({uri}) => {
+				const file = vscode.Uri.parse(uri)
+				vscode.window.showTextDocument(file)
+				return 'Opened file ' + uri
+			},
+		},
+	};
+}
+
+function Diagnostic() {
+	return {
+		type: 'function',
+		function: {
+			name: 'Diagnostic',
+			description: 'Run diagnostics on the current workspace',
+			parse: JSON.parse,
+			parameters: {
+				type: 'object',
+				properties: {},
+			},
+			function: async () => {
+				const diagnostics = await vscode.languages.getDiagnostics()
+				return diagnostics.map(diagnostic => diagnostic.toString())
 			},
 		},
 	};
