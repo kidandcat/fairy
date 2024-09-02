@@ -1,6 +1,6 @@
 {
-  "name": "fairy2",
-  "displayName": "fairy2",
+  "name": "fairy",
+  "displayName": "fairy",
   "description": "",
   "version": "0.0.1",
   "engines": {
@@ -16,7 +16,7 @@
   "contributes": {
     "commands": [
       {
-        "command": "fairy2.fairy",
+        "command": "fairy.fairy",
         "title": "Fairy"
       }
     ]

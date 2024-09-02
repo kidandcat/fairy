@@ -1,65 +1,53 @@
-# fairy2 README
+# Fairy: Control VS Code with Your Voice
 
-This is the README for your extension "fairy2". After writing up a brief description, we recommend including the following sections.
+Fairy is an extension for Visual Studio Code that allows you to control the editor using voice commands with Whisper and GPT-4o-mini. This tool is designed to enhance accessibility and efficiency when developing in new environments with limited traditional HID (Human Interface Devices, like keyboards), such as when using a VR headset.
 
 ## Features
 
-Describe specific features of your extension including screenshots of your extension in action. Image paths are relative to this README file.
+- **Voice Control**: Use voice commands to perform actions in VS Code.
+- **Whisper Integration**: Transcribes your voice commands into text.
+- **GPT-4o-mini**: Processes and executes the transcribed commands.
+- **Interactive Status Bar**: Displays the current status of the extension and allows you to initiate voice commands.
 
-For example if there is an image subfolder under your extension project workspace:
+## Installation
 
-\!\[feature X\]\(images/feature-x.png\)
+1. Clone this repository:
+    ```bash
+    git clone https://github.com/your-username/fairy.git
+    ```
+2. Navigate to the project directory:
+    ```bash
+    cd fairy
+    ```
+3. Install the dependencies:
+    ```bash
+    npm install
+    ```
+4. Open Visual Studio Code in the project directory:
+    ```bash
+    code .
+    ```
+5. Press `F5` to start the extension in a new VS Code window.
 
-> Tip: Many popular extensions utilize animations. This is an excellent way to show off your extension! We recommend short, focused animations that are easy to follow.
+## Usage
 
-## Requirements
+1. Ensure your microphone is connected and working.
+2. Click on the status bar icon that says "Fairy ready" to activate listening mode.
+3. Speak your command. The extension will transcribe and execute the command in VS Code.
 
-If you have any requirements or dependencies, add a section describing those and how to install and configure them.
+## Available Commands
 
-## Extension Settings
+- **Open File**: "Open file [filename]"
+- **Close File**: "Close file"
+- **Save File**: "Save file"
+- **Run Code**: "Run code"
+- **Search**: "Search for [query]"
+- **Complex Commands**: As Fairy uses an advanced LLM, it understands and executes complex commands. For example, "Create a new JavaScript file named `app.js` and add a function to log 'Hello World'."
 
-Include if your extension adds any VS Code settings through the `contributes.configuration` extension point.
+## Contributing
 
-For example:
+Contributions are welcome! Please fork this repository and submit a pull request with your changes.
 
-This extension contributes the following settings:
+## License
 
-* `myExtension.enable`: Enable/disable this extension.
-* `myExtension.thing`: Set to `blah` to do something.
-
-## Known Issues
-
-Calling out known issues can help limit users opening duplicate issues against your extension.
-
-## Release Notes
-
-Users appreciate release notes as you update your extension.
-
-### 1.0.0
-
-Initial release of ...
-
-### 1.0.1
-
-Fixed issue #.
-
-### 1.1.0
-
-Added features X, Y, and Z.
-
----
-
-## Working with Markdown
-
-You can author your README using Visual Studio Code.  Here are some useful editor keyboard shortcuts:
-
-* Split the editor (`Cmd+\` on macOS or `Ctrl+\` on Windows and Linux)
-* Toggle preview (`Shift+Cmd+V` on macOS or `Shift+Ctrl+V` on Windows and Linux)
-* Press `Ctrl+Space` (Windows, Linux, macOS) to see a list of Markdown snippets
-
-## For more information
-
-* [Visual Studio Code's Markdown Support](http://code.visualstudio.com/docs/languages/markdown)
-* [Markdown Syntax Reference](https://help.github.com/articles/markdown-basics/)
-
-**Enjoy!**
+This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.

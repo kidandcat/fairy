@@ -15,7 +15,7 @@ var statusBarItem
  * @param {vscode.ExtensionContext} context
  */
 function activate(context) {
-	const disposable = vscode.commands.registerCommand('fairy2.fairy', async function () {
+	const disposable = vscode.commands.registerCommand('fairy.fairy', async function () {
 		var activeEditor = vscode.window.activeTextEditor
 		if (!activeEditor) {
 			return
@@ -29,7 +29,7 @@ function activate(context) {
 
 	// create a new status bar item that we can now manage
 	statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
-	statusBarItem.command = 'fairy2.fairy';
+	statusBarItem.command = 'fairy.fairy';
 	statusBarItem.text = 'Fairy ready';
 	statusBarItem.show();
 	context.subscriptions.push(statusBarItem);
