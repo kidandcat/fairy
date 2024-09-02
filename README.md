@@ -37,12 +37,19 @@ Fairy is an extension for Visual Studio Code that allows you to control the edit
 
 ## Available Commands
 
-- **Open File**: "Open file [filename]"
-- **Close File**: "Close file"
-- **Save File**: "Save file"
-- **Run Code**: "Run code"
-- **Search**: "Search for [query]"
-- **Complex Commands**: As Fairy uses an advanced LLM, it understands and executes complex commands. For example, "Create a new JavaScript file named `app.js` and add a function to log 'Hello World'."
+As Fairy uses an advanced LLM, it understands and executes complex commands. For example, "Create a new JavaScript file named `app.js` and add a function to log 'Hello World'."
+
+Right now the AI has access to the following actions:
+    - ReplaceCodeAtLine()
+    - Save()
+    - DeleteLines()
+    - FocusLines()
+    - ListFiles()
+    - FindFiles()
+    - OpenFile()
+    - Diagnostic()
+    - Response()
+    - GetDocumentation()
 
 ## Contributing
 
