@@ -27,6 +27,7 @@ function activate(context) {
 	});
 	context.subscriptions.push(disposable);
 
+
 	// create a new status bar item that we can now manage
 	statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
 	statusBarItem.command = 'fairy.fairy';
@@ -77,6 +78,7 @@ async function run_assistant(filename, content) {
 			OpenFile(),
 			Diagnostic(),
 			Response(),
+			GetDocumentation(),
 		],
 	}).on('functionCall', (functionCall) => {
 		console.log('functionCall:', functionCall);
@@ -111,36 +113,47 @@ function content() {
 // null
 
 function ReplaceCodeAtLine() {
-	return {
-		type: 'function',
-		function: {
-			name: 'ReplaceCodeAtLine',
-			description: 'Replace code at a specific line',
-			parse: JSON.parse,
-			parameters: {
-				type: 'object',
-				properties: {
-					line: {
-						type: 'number',
-						description: 'Line number to replace',
-					},
-					code: {
-						type: 'string',
-						description: 'Code to replace with',
-					},
-				},
-			},
-			function: async ({ line, code }) => {
-				const start = new vscode.Position(line, 0)
-				const end = new vscode.Position(line + 1, 0)
-				await vscode.window.activeTextEditor.edit(editBuilder => {
-					editBuilder.replace(new vscode.Range(start, end), code + '\n')
-				})
-				statusBarItem.text = "Replaced code at line " + line
-				return vscode.window.activeTextEditor.document.uri + ':\n' + content()
-			},
-		},
-	};
+    return {
+        type: 'function',
+        function: {
+            name: 'ReplaceCodeAtLine',
+            description: 'Replace code at a specific line',
+            parse: JSON.parse,
+            parameters: {
+                type: 'object',
+                properties: {
+                    line: {
+                        type: 'number',
+                        description: 'Line number to replace',
+                    },
+                    code: {
+                        type: 'string',
+                        description: 'Code to replace with',
+                    },
+                },
+            },
+            function: async ({ line, code }) => {
+                const editor = vscode.window.activeTextEditor;
+                if (!editor) {
+                    return 'No active editor';
+                }
+
+                const document = editor.document;
+                const lineToReplace = document.lineAt(line - 1);
+                const fullRange = lineToReplace.range;
+
+                await editor.edit(editBuilder => {
+                    editBuilder.replace(fullRange, code);
+                });
+
+                statusBarItem.text = "Replaced code at line " + line;
+
+                // Get the updated content of the first 3 lines
+                const updatedContent = document.getText().split('\n').slice(0, 3).join('\n');
+                return `${document.uri.toString()}:\n${updatedContent}`;
+            },
+        },
+    };
 }
 
 function Save() {
@@ -189,7 +202,7 @@ function DeleteLines() {
 				await vscode.window.activeTextEditor.edit(editBuilder => {
 					editBuilder.delete(new vscode.Range(startPos, endPos))
 				})
-				statusBarItem.text = "Deleted lines " + start + 1 + " to " + end + 1
+				statusBarItem.text = `Deleted lines ${start + 1} to ${end + 1}`
 				return vscode.window.activeTextEditor.document.uri + ':\n' + content()
 			},
 		},
@@ -217,9 +230,9 @@ function FocusLines() {
 				},
 			},
 			function: ({ start, end }) => {
-				statusBarItem.text = "Focusing on lines " + start + 1 + " to " + end + 1
+				statusBarItem.text = `Focusing on lines ${start + 1} to ${end + 1}`
 				vscode.window.activeTextEditor.revealRange(new vscode.Range(start + 1, 0, end + 1, 0), vscode.TextEditorRevealType.InCenter)
-				return 'Focused on lines ' + start + 1 + ' to ' + end + 1
+				return `Focused on lines ${start + 1} to ${end + 1}`
 			},
 		},
 	};
@@ -352,6 +365,46 @@ function Response() {
 	};
 }
 
+function GetDocumentation() {
+    return {
+        type: 'function',
+        function: {
+            name: 'GetDocumentation',
+            description: 'Get the documentation of a function or symbol',
+            parse: JSON.parse,
+            parameters: {
+                type: 'object',
+                properties: {
+                    symbol: {
+                        type: 'string',
+                        description: 'The name of the function or symbol to get documentation for',
+                    },
+                },
+            },
+            function: async ({ symbol }) => {
+                const activeEditor = vscode.window.activeTextEditor;
+                if (!activeEditor) {
+                    return 'No active editor';
+                }
+
+                const document = activeEditor.document;
+                const text = document.getText();
+                const regex = new RegExp(`(\\/\\*\\*[^]*?\\*\\/\\s*function\\s+${symbol}\\s*\\([^\\)]*\\))|(\\/\\*\\*[^]*?\\*\\/\\s*${symbol}\\s*:\\s*function\\s*\\([^\\)]*\\))`, 'g');
+                const match = regex.exec(text);
+
+                if (match) {
+                    const documentation = match[0];
+                    statusBarItem.text = `Documentation for ${symbol} found`;
+                    return documentation;
+                } else {
+                    statusBarItem.text = `Documentation for ${symbol} not found`;
+                    return `Documentation for ${symbol} not found`;
+                }
+            },
+        },
+    };
+}
+
 /////////////////
 // AUDIO INPUT //
 /////////////////
@@ -428,3 +481,18 @@ function convertRawToWav(rawAudioBuffer) {
 
 	return Buffer.concat([wavHeader, rawAudioBuffer]);
 }
+
+// Export all tool functions
+module.exports = {
+	activate,
+	ReplaceCodeAtLine,
+	Save,
+	DeleteLines,
+	FocusLines,
+	ListFiles,
+	FindFiles,
+	OpenFile,
+	Diagnostic,
+	Response,
+	GetDocumentation
+};
