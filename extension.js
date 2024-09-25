@@ -9,20 +9,37 @@ const openai = new OpenAI({
 
 const DEBUG = ''
 
+var run = false
 var statusBarItem
 
 /**
  * @param {vscode.ExtensionContext} context
  */
 function activate(context) {
+	console.log('Fairy is now active!');
+
 	const disposable = vscode.commands.registerCommand('fairy.fairy', async function () {
+		if (run) {
+			run = false
+			statusBarItem.text = 'Fairy ready'
+			statusBarItem.backgroundColor = new vscode.ThemeColor("statusBarItem.warningBackground");
+			if (recorder) {
+				recorder.stop()
+			}
+			return
+		}
+		run = true
 		var activeEditor = vscode.window.activeTextEditor
 		if (!activeEditor) {
 			return
 		}
-		var filename = activeEditor.document.uri
-		var content = activeEditor.document.getText()
-		await run_assistant(filename, content)
+		statusBarItem.backgroundColor = new vscode.ThemeColor("statusBarItem.errorBackground", "#FF0000");
+		while (run) {
+			var filename = activeEditor.document.uri
+			var content = activeEditor.document.getText()
+			await run_assistant(filename, content)
+		}
+		statusBarItem.backgroundColor = new vscode.ThemeColor("statusBarItem.warningBackground");
 		statusBarItem.text = 'Fairy ready';
 	});
 	context.subscriptions.push(disposable);
@@ -36,7 +53,7 @@ function activate(context) {
 	context.subscriptions.push(statusBarItem);
 }
 
-function deactivate() { }
+function deactivate() {}
 
 module.exports = {
 	activate,
@@ -62,25 +79,38 @@ async function run_assistant(filename, content) {
 	})
 
 	var input = await listen_input()
+
+	// Validate input
+	// const chatCompletion = await openai.chat.completions.create({
+	// 	messages: [
+	// 		{
+	// 			role: "user",
+	// 			content: `Return VALID if the input is a user voice command, and INVALID if it is something else. Input: ${input}`,
+	// 		}
+	// 	],
+	// 	model: 'gpt-4o-mini',
+	// })
+	// if (chatCompletion.choices[0].message.content == 'INVALID') {
+	// 	vscode.window.showInformationMessage('Invalid input: ' + input) 
+	// 	return
+	// }
+
 	messages.push({ role: "user", content: input })
 
-
+	var toolsUsed = 0
 	const runner = openai.beta.chat.completions.runTools({
 		messages: messages,
 		model: 'gpt-4o-mini',
 		tools: [
-			ReplaceCodeAtLine(),
+			ModifyCode(),
 			Save(),
-			DeleteLines(),
 			FocusLines(),
 			ListFiles(),
 			FindFiles(),
 			OpenFile(),
-			Diagnostic(),
-			Response(),
-			GetDocumentation(),
 		],
 	}).on('functionCall', (functionCall) => {
+		toolsUsed++
 		console.log('functionCall:', functionCall);
 		vscode.window.showInformationMessage(functionCall.name + '(' + functionCall.arguments + ')');
 	})
@@ -89,6 +119,13 @@ async function run_assistant(filename, content) {
 		await runner.done();
 	} catch (e) {
 		console.log('done Error:', e);
+	}
+
+	if (toolsUsed == 0) {
+		vscode.window.showInformationMessage('No tools used, delegating to Cursor')
+		ModifyCode().function.function({ input })
+	}else{
+		vscode.window.showInformationMessage('Tools used: ' + toolsUsed)
 	}
 }
 
@@ -112,43 +149,28 @@ function content() {
 // boolean
 // null
 
-function ReplaceCodeAtLine() {
+function ModifyCode() {
     return {
         type: 'function',
         function: {
-            name: 'ReplaceCodeAtLine',
-            description: 'Replace code at a specific line',
+            name: 'ModifyCode',
+            description: 'Modify the code using AI',
             parse: JSON.parse,
             parameters: {
                 type: 'object',
                 properties: {
-                    line: {
-                        type: 'number',
-                        description: 'Line number to replace',
-                    },
-                    code: {
+                    input: {
                         type: 'string',
-                        description: 'Code to replace with',
+                        description: 'The requested modification (do not include code)',
                     },
                 },
             },
-            function: async ({ line, code }) => {
-                const editor = vscode.window.activeTextEditor;
-                if (!editor) {
-                    return 'No active editor';
-                }
-
-                const document = editor.document;
-                const lineToReplace = document.lineAt(line - 1);
-                const fullRange = lineToReplace.range;
-
-                await editor.edit(editBuilder => {
-                    editBuilder.replace(fullRange, code);
-                });
-
-                statusBarItem.text = "Replaced code at line " + line;
+            function: async ({ input }) => {
+                // run aipopup.action.modal.generate command
+				vscode.commands.executeCommand('aipopup.action.modal.generate', input)
 
                 // Get the updated content of the first 3 lines
+				const document = vscode.window.activeTextEditor.document
                 const updatedContent = document.getText().split('\n').slice(0, 3).join('\n');
                 return `${document.uri.toString()}:\n${updatedContent}`;
             },
@@ -322,25 +344,6 @@ function OpenFile() {
 	};
 }
 
-function Diagnostic() {
-	return {
-		type: 'function',
-		function: {
-			name: 'Diagnostic',
-			description: 'Run diagnostics on the current workspace',
-			parse: JSON.parse,
-			parameters: {
-				type: 'object',
-				properties: {},
-			},
-			function: async () => {
-				const diagnostics = await vscode.languages.getDiagnostics()
-				return diagnostics.map(diagnostic => diagnostic.toString())
-			},
-		},
-	};
-}
-
 function Response() {
 	return {
 		type: 'function',
@@ -365,50 +368,13 @@ function Response() {
 	};
 }
 
-function GetDocumentation() {
-    return {
-        type: 'function',
-        function: {
-            name: 'GetDocumentation',
-            description: 'Get the documentation of a function or symbol',
-            parse: JSON.parse,
-            parameters: {
-                type: 'object',
-                properties: {
-                    symbol: {
-                        type: 'string',
-                        description: 'The name of the function or symbol to get documentation for',
-                    },
-                },
-            },
-            function: async ({ symbol }) => {
-                const activeEditor = vscode.window.activeTextEditor;
-                if (!activeEditor) {
-                    return 'No active editor';
-                }
 
-                const document = activeEditor.document;
-                const text = document.getText();
-                const regex = new RegExp(`(\\/\\*\\*[^]*?\\*\\/\\s*function\\s+${symbol}\\s*\\([^\\)]*\\))|(\\/\\*\\*[^]*?\\*\\/\\s*${symbol}\\s*:\\s*function\\s*\\([^\\)]*\\))`, 'g');
-                const match = regex.exec(text);
-
-                if (match) {
-                    const documentation = match[0];
-                    statusBarItem.text = `Documentation for ${symbol} found`;
-                    return documentation;
-                } else {
-                    statusBarItem.text = `Documentation for ${symbol} not found`;
-                    return `Documentation for ${symbol} not found`;
-                }
-            },
-        },
-    };
-}
 
 /////////////////
 // AUDIO INPUT //
 /////////////////
 
+var recorder
 async function listen_input() {
 	return new Promise((resolve) => {
 		if (DEBUG != '') {
@@ -416,7 +382,7 @@ async function listen_input() {
 			return
 		}
 		var data = []
-		const recorder = new SpeechRecorder({
+		recorder = new SpeechRecorder({
 			consecutiveFramesForSpeaking: 10,
 			onChunkStart: () => {
 				statusBarItem.text = "Listening..."
@@ -485,14 +451,12 @@ function convertRawToWav(rawAudioBuffer) {
 // Export all tool functions
 module.exports = {
 	activate,
-	ReplaceCodeAtLine,
+	ModifyCode,
 	Save,
 	DeleteLines,
 	FocusLines,
 	ListFiles,
 	FindFiles,
 	OpenFile,
-	Diagnostic,
 	Response,
-	GetDocumentation
 };
