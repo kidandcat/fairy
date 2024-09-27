@@ -13,7 +13,7 @@ Fairy is an extension for Visual Studio Code that allows you to control the edit
 
 1. Clone this repository:
     ```bash
-    git clone https://github.com/your-username/fairy.git
+    git clone https://github.com/kidandcat/fairy.git
     ```
 2. Navigate to the project directory:
     ```bash
