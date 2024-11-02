@@ -44,47 +44,57 @@ function activate(context) {
 		</head>
 		<body>
 		<div id="info"></div>
-		<audio id="audio-player" controls muted autoplay></audio>
+		<button onclick="start()">START</button>
 
 		<script>
+			var audioContext;
 			const i = document.querySelector('#info');
-			const audioPlayer = document.querySelector('#audio-player');
+			const button = document.querySelector('button');
 
 			function base64ToArrayBuffer(base64) {
-			const binaryString = atob(base64);
-			const len = binaryString.length;
-			const bytes = new Uint8Array(len);
-			for (let i = 0; i < len; i++) {
-				bytes[i] = binaryString.charCodeAt(i);
+				const binaryString = atob(base64);
+				const len = binaryString.length;
+				const bytes = new Uint8Array(len);
+				for (let i = 0; i < len; i++) {
+					bytes[i] = binaryString.charCodeAt(i);
+				}
+				return bytes.buffer;
 			}
-			return bytes.buffer;
+
+			function start(){
+				audioContext = new (window.AudioContext || window.webkitAudioContext)({
+					sampleRate: 16000
+				});
+				button.style.display = 'none';
+			}
+
+			function playAudioBuffer(audioContext, audioBuffer) {
+				const source = audioContext.createBufferSource();
+				source.buffer = audioBuffer;
+				source.connect(audioContext.destination);
+				source.start(0);
 			}
 
 			window.addEventListener('message', async (event) => {
-			const { command, audioData } = event.data;
-			i.innerHTML += "<br>Received event command: " + command;
-			
-			if (command === 'loadAudio') {
-				try {
-				i.innerHTML += " Running loadAudio command";
-				const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+				const { command, audioData } = event.data;
+				i.innerHTML += "<br>Received event command: " + command;
 				
-				// Decode base64 string to ArrayBuffer
-				const arrayBuffer = base64ToArrayBuffer(audioData);
-				i.innerHTML += "<br>Decoded ArrayBuffer length: " + arrayBuffer.byteLength;
-				
-				const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
-				
-				// Convert the decoded audio buffer to a blob URL and set it as the audio source
-				const audioBlob = new Blob([arrayBuffer], { type: 'audio/mp3' });
-				const audioUrl = URL.createObjectURL(audioBlob);
-				audioPlayer.src = audioUrl;
-				audioPlayer.play();
-				i.innerHTML += "<br>Audio loaded and ready to play. Unmute and play using the controls below.";
-				} catch(e) {
-				i.innerHTML += ' Exception: ' + (e.message || e);
+				if (command === 'loadAudio') {
+					try {
+						i.innerHTML += " Running loadAudio command";
+						
+						// Decode base64 string to ArrayBuffer
+						const arrayBuffer = base64ToArrayBuffer(audioData);
+						i.innerHTML += "<br>Decoded ArrayBuffer length: " + arrayBuffer.byteLength;
+						
+						const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+						playAudioBuffer(audioContext, audioBuffer);
+
+						i.innerHTML += "<br>Audio loaded and ready to play. Unmute and play using the controls below.";
+					} catch(e) {
+						i.innerHTML += ' Exception: ' + (e.message || e);
+					}
 				}
-			}
 			});
 		</script>
 		</body>
@@ -107,6 +117,7 @@ function activate(context) {
 					You are an assistant to help the user control their code editor with their voice.
 					You have available functions to control the editor.
 					Talk quickly and concisely.
+					Always give audio feedback if you received any input.
 				`,
 				tools: [
 					ModifyCode(),
@@ -134,35 +145,44 @@ function activate(context) {
 	ws.on("message", async function incoming(message) {
 		const msg = JSON.parse(message.toString())
 		console.log('<<<', msg);
-		switch (msg.type) {
-			case 'response.audio.delta':
-				audioDelta.push(Buffer.from(msg.delta, 'base64'));
-				break;
-			case 'response.audio.done':
-				const audioBuffer = Buffer.concat(audioDelta);
-				const wavBuffer = convertRawToWav(audioBuffer);
-				panel.webview.postMessage({
-					command: 'loadAudio',
-					audioData: wavBuffer.toString('base64'),
-				});
-				audioDelta = [];
-				break;
-			case 'response.text.delta':
-				textDelta += msg.delta
-				break;
-			case 'response.text.done':
-				vscode.window.showInformationMessage(textDelta);
-				textDelta = '';
-				break;
-			case 'response.audio_transcript.delta':
-				transcriptDelta += msg.delta
-				break;
-			case 'response.audio_transcript.done':
-				vscode.window.showInformationMessage(transcriptDelta);
-				transcriptDelta = '';
-				break;
-			default:
-				break;
+		try {
+			switch (msg.type) {
+				case 'response.audio.delta':
+					audioDelta.push(Buffer.from(msg.delta, 'base64'));
+					break;
+				case 'response.audio.done':
+					const audioBuffer = Buffer.concat(audioDelta);
+					const wavBuffer = convertRawToWav(audioBuffer);
+					panel.webview.postMessage({
+						command: 'loadAudio',
+						audioData: wavBuffer.toString('base64'),
+					});
+					audioDelta = [];
+					break;
+				case 'response.text.delta':
+					textDelta += msg.delta
+					break;
+				case 'response.text.done':
+					vscode.window.showInformationMessage(textDelta);
+					textDelta = '';
+					break;
+				case 'response.audio_transcript.delta':
+					transcriptDelta += msg.delta
+					break;
+				case 'response.audio_transcript.done':
+					vscode.window.showInformationMessage(transcriptDelta);
+					transcriptDelta = '';
+					break;
+				case 'response.done':
+					if (msg.response.status == 'failed'){
+						vscode.window.showInformationMessage(msg.response.status_details.error.message);
+					}
+					break;
+				default:
+					break;
+			}
+		} catch (e) {
+			vscode.window.showInformationMessage(e.message || e);
 		}
 	});
 }
@@ -455,7 +475,7 @@ async function listen_input() {
 					break;
 				}
 			}
-			if(isAllZeros) return;
+			if (isAllZeros) return;
 			const base64AudioData = base64EncodeAudio(decodedwav.channelData[0]);
 			const msg = {
 				type: 'input_audio_buffer.append',
