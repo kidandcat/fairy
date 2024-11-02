@@ -74,7 +74,7 @@ const {
     Response,
     GetDocumentation,
 	activate,
-} = require('../extension');
+} = require('../extension.js');
 
 // At the top of your test file, after the vscode mock
 const mockContext = {

@@ -2,6 +2,9 @@ const vscode = require('vscode');
 const OpenAI = require('openai');
 const { toFile } = require('openai/uploads')
 const { SpeechRecorder } = require("speech-recorder");
+const WebSocket = require('ws')
+const play = require('audio-play');
+const load = require('audio-loader');
 
 const openai = new OpenAI({
 	apiKey: process.env.OPENAI_API_KEY,
@@ -9,8 +12,10 @@ const openai = new OpenAI({
 
 const DEBUG = ''
 
-var run = false
+const wsurl = "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01";
 var statusBarItem
+var panel;
+var ws;
 
 /**
  * @param {vscode.ExtensionContext} context
@@ -18,42 +23,153 @@ var statusBarItem
 function activate(context) {
 	console.log('Fairy is now active!');
 
-	const disposable = vscode.commands.registerCommand('fairy.fairy', async function () {
-		if (run) {
-			run = false
-			statusBarItem.text = 'Fairy ready'
-			statusBarItem.backgroundColor = new vscode.ThemeColor("statusBarItem.warningBackground");
-			if (recorder) {
-				recorder.stop()
-			}
-			return
-		}
-		run = true
-		var activeEditor = vscode.window.activeTextEditor
-		if (!activeEditor) {
-			return
-		}
-		statusBarItem.backgroundColor = new vscode.ThemeColor("statusBarItem.errorBackground", "#FF0000");
-		while (run) {
-			var filename = activeEditor.document.uri
-			var content = activeEditor.document.getText()
-			await run_assistant(filename, content)
-		}
-		statusBarItem.backgroundColor = new vscode.ThemeColor("statusBarItem.warningBackground");
-		statusBarItem.text = 'Fairy ready';
-	});
-	context.subscriptions.push(disposable);
-
-
 	// create a new status bar item that we can now manage
 	statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
 	statusBarItem.command = 'fairy.fairy';
 	statusBarItem.text = 'Fairy ready';
 	statusBarItem.show();
 	context.subscriptions.push(statusBarItem);
+
+	panel = vscode.window.createWebviewPanel(
+		'audioPlayer',
+		'Audio Player',
+		vscode.ViewColumn.One,
+		{ enableScripts: true, }
+	);
+	panel.webview.html = `<!DOCTYPE html>
+	<html lang="en">
+		<head>
+		<meta charset="UTF-8">
+		<title>Audio Player</title>
+		</head>
+		<body>
+		<div id="info"></div>
+		<audio id="audio-player" controls muted autoplay></audio>
+
+		<script>
+			const i = document.querySelector('#info');
+			const audioPlayer = document.querySelector('#audio-player');
+
+			function base64ToArrayBuffer(base64) {
+			const binaryString = atob(base64);
+			const len = binaryString.length;
+			const bytes = new Uint8Array(len);
+			for (let i = 0; i < len; i++) {
+				bytes[i] = binaryString.charCodeAt(i);
+			}
+			return bytes.buffer;
+			}
+
+			window.addEventListener('message', async (event) => {
+			const { command, audioData } = event.data;
+			i.innerHTML += "<br>Received event command: " + command;
+			
+			if (command === 'loadAudio') {
+				try {
+				i.innerHTML += " Running loadAudio command";
+				const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+				
+				// Decode base64 string to ArrayBuffer
+				const arrayBuffer = base64ToArrayBuffer(audioData);
+				i.innerHTML += "<br>Decoded ArrayBuffer length: " + arrayBuffer.byteLength;
+				
+				const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+				
+				// Convert the decoded audio buffer to a blob URL and set it as the audio source
+				const audioBlob = new Blob([arrayBuffer], { type: 'audio/mp3' });
+				const audioUrl = URL.createObjectURL(audioBlob);
+				audioPlayer.src = audioUrl;
+				audioPlayer.play();
+				i.innerHTML += "<br>Audio loaded and ready to play. Unmute and play using the controls below.";
+				} catch(e) {
+				i.innerHTML += ' Exception: ' + (e.message || e);
+				}
+			}
+			});
+		</script>
+		</body>
+	</html>`;
+
+	ws = new WebSocket(wsurl, {
+		headers: {
+			"Authorization": "Bearer " + process.env.OPENAI_API_KEY,
+			"OpenAI-Beta": "realtime=v1",
+		},
+	});
+
+	ws.on("open", function open() {
+		ws.send(JSON.stringify({
+			type: "session.update",
+			modalities: ["text", "audio"],
+			output_audio_format: "pcm16",
+			session: {
+				instructions: `
+					You are an assistant to help the user control their code editor with their voice.
+					You have available functions to control the editor.
+					Talk quickly and concisely.
+				`,
+				tools: [
+					ModifyCode(),
+					Save(),
+					FocusLines(),
+					ListFiles(),
+					FindFiles(),
+					OpenFile(),
+				]
+			}
+		}));
+		ws.send(JSON.stringify({
+			type: "response.create",
+			response: {
+				modalities: ["text"],
+				instructions: ".",
+			}
+		}));
+		listen_input();
+	});
+
+	var transcriptDelta = '';
+	var textDelta = '';
+	var audioDelta = [];
+	ws.on("message", async function incoming(message) {
+		const msg = JSON.parse(message.toString())
+		console.log('<<<', msg);
+		switch (msg.type) {
+			case 'response.audio.delta':
+				audioDelta.push(Buffer.from(msg.delta, 'base64'));
+				break;
+			case 'response.audio.done':
+				const audioBuffer = Buffer.concat(audioDelta);
+				const wavBuffer = convertRawToWav(audioBuffer);
+				panel.webview.postMessage({
+					command: 'loadAudio',
+					audioData: wavBuffer.toString('base64'),
+				});
+				audioDelta = [];
+				break;
+			case 'response.text.delta':
+				textDelta += msg.delta
+				break;
+			case 'response.text.done':
+				vscode.window.showInformationMessage(textDelta);
+				textDelta = '';
+				break;
+			case 'response.audio_transcript.delta':
+				transcriptDelta += msg.delta
+				break;
+			case 'response.audio_transcript.done':
+				vscode.window.showInformationMessage(transcriptDelta);
+				transcriptDelta = '';
+				break;
+			default:
+				break;
+		}
+	});
 }
 
-function deactivate() {}
+function deactivate() {
+	ws.close()
+}
 
 module.exports = {
 	activate,
@@ -70,70 +186,13 @@ function add_lines(content) {
 	return numbered_lines.join('\n')
 }
 
-async function run_assistant(filename, content) {
-	var messages = []
-	var code = add_lines(content)
-	messages.push({
-		role: "user", content: `${filename}: 
-	${code}`
-	})
 
-	var input = await listen_input()
-
-	// Validate input
-	// const chatCompletion = await openai.chat.completions.create({
-	// 	messages: [
-	// 		{
-	// 			role: "user",
-	// 			content: `Return VALID if the input is a user voice command, and INVALID if it is something else. Input: ${input}`,
-	// 		}
-	// 	],
-	// 	model: 'gpt-4o-mini',
-	// })
-	// if (chatCompletion.choices[0].message.content == 'INVALID') {
-	// 	vscode.window.showInformationMessage('Invalid input: ' + input) 
-	// 	return
-	// }
-
-	messages.push({ role: "user", content: input })
-
-	var toolsUsed = 0
-	const runner = openai.beta.chat.completions.runTools({
-		messages: messages,
-		model: 'gpt-4o-mini',
-		tools: [
-			ModifyCode(),
-			Save(),
-			FocusLines(),
-			ListFiles(),
-			FindFiles(),
-			OpenFile(),
-		],
-	}).on('functionCall', (functionCall) => {
-		toolsUsed++
-		console.log('functionCall:', functionCall);
-		vscode.window.showInformationMessage(functionCall.name + '(' + functionCall.arguments + ')');
-	})
-
-	try {
-		await runner.done();
-	} catch (e) {
-		console.log('done Error:', e);
-	}
-
-	if (toolsUsed == 0) {
-		vscode.window.showInformationMessage('No tools used, delegating to Cursor')
-		ModifyCode().function.function({ input })
-	}else{
-		vscode.window.showInformationMessage('Tools used: ' + toolsUsed)
-	}
-}
 
 function content() {
 	var content = vscode.window.activeTextEditor.document.getText()
 	var focusedLine = vscode.window.activeTextEditor.selection.active.line
-	var startLine = Math.max(0, focusedLine - 400000)
-	var endLine = Math.min(vscode.window.activeTextEditor.document.lineCount - 1, focusedLine + 400000)
+	var startLine = Math.max(0, focusedLine - 1000)
+	var endLine = Math.min(vscode.window.activeTextEditor.document.lineCount - 1, focusedLine + 1000)
 	var croppedContent = content.split('\n').slice(startLine, endLine + 1).join('\n')
 	return add_lines(croppedContent)
 }
@@ -150,32 +209,32 @@ function content() {
 // null
 
 function ModifyCode() {
-    return {
-        type: 'function',
-        function: {
-            name: 'ModifyCode',
-            description: 'Modify the code using AI',
-            parse: JSON.parse,
-            parameters: {
-                type: 'object',
-                properties: {
-                    input: {
-                        type: 'string',
-                        description: 'The requested modification (do not include code)',
-                    },
-                },
-            },
-            function: async ({ input }) => {
-                // run aipopup.action.modal.generate command
+	return {
+		type: 'function',
+		function: {
+			name: 'ModifyCode',
+			description: 'Modify the code using AI',
+			parse: JSON.parse,
+			parameters: {
+				type: 'object',
+				properties: {
+					input: {
+						type: 'string',
+						description: 'The requested modification (do not include code)',
+					},
+				},
+			},
+			function: async ({ input }) => {
+				// run aipopup.action.modal.generate command
 				vscode.commands.executeCommand('aipopup.action.modal.generate', input)
 
-                // Get the updated content of the first 3 lines
+				// Get the updated content of the first 3 lines
 				const document = vscode.window.activeTextEditor.document
-                const updatedContent = document.getText().split('\n').slice(0, 3).join('\n');
-                return `${document.uri.toString()}:\n${updatedContent}`;
-            },
-        },
-    };
+				const updatedContent = document.getText().split('\n').slice(0, 3).join('\n');
+				return `${document.uri.toString()}:\n${updatedContent}`;
+			},
+		},
+	};
 }
 
 function Save() {
@@ -373,39 +432,40 @@ function Response() {
 /////////////////
 // AUDIO INPUT //
 /////////////////
-
 var recorder
 async function listen_input() {
-	return new Promise((resolve) => {
-		if (DEBUG != '') {
-			resolve(DEBUG)
-			return
-		}
-		var data = []
-		recorder = new SpeechRecorder({
-			consecutiveFramesForSpeaking: 10,
-			onChunkStart: () => {
-				statusBarItem.text = "Listening..."
-			},
-			onAudio: ({ audio }) => {
-				data.push(Buffer.from(audio.buffer));
-			},
-			onChunkEnd: async () => {
-				recorder.stop()
-				statusBarItem.text = "Processing..."
-				const audioBuffer = Buffer.concat(data);
-				const wavBuffer = convertRawToWav(audioBuffer);
-				const transcription = await openai.audio.transcriptions.create({
-					file: await toFile(wavBuffer, "command.wav"),
-					model: "whisper-1",
-				});
-				vscode.window.showInformationMessage(transcription.text)
-				resolve(transcription.text)
+	if (DEBUG != '') {
+		resolve(DEBUG)
+		return
+	}
+	var data = []
+	if (!decoder) {
+		let module = await import('node-wav')
+		decoder = module.default.decode
+	}
+	recorder = new SpeechRecorder({
+		onAudio: async ({ audio }) => {
+			const wavBuffer = convertRawToWav(Buffer.from(audio.buffer));
+			const decodedwav = await decoder(wavBuffer)
+			if (!decodedwav) return;
+			let isAllZeros = true;
+			for (let i = 0; i < decodedwav.channelData[0].length; i++) {
+				if (decodedwav.channelData[0][i] !== 0) {
+					isAllZeros = false;
+					break;
+				}
 			}
-		})
-		statusBarItem.text = "Ready to listen"
-		recorder.start()
-	});
+			if(isAllZeros) return;
+			const base64AudioData = base64EncodeAudio(decodedwav.channelData[0]);
+			const msg = {
+				type: 'input_audio_buffer.append',
+				audio: base64AudioData
+			}
+			ws.send(JSON.stringify(msg));
+		},
+	})
+	statusBarItem.text = "Ready to listen"
+	recorder.start()
 }
 
 function createWavHeader({ sampleRate, bitDepth, channels, dataLength }) {
@@ -448,6 +508,60 @@ function convertRawToWav(rawAudioBuffer) {
 	return Buffer.concat([wavHeader, rawAudioBuffer]);
 }
 
+// Converts a Float32Array to base64-encoded PCM16 data
+function base64EncodeAudio(float32Array) {
+	const arrayBuffer = floatTo16BitPCM(float32Array);
+	let binary = '';
+	let bytes = new Uint8Array(arrayBuffer);
+	const chunkSize = 0x8000; // 32KB chunk size
+	for (let i = 0; i < bytes.length; i += chunkSize) {
+		let chunk = bytes.subarray(i, i + chunkSize);
+		binary += String.fromCharCode.apply(null, chunk);
+	}
+	return btoa(binary);
+}
+
+// Converts Float32Array of audio data to PCM16 ArrayBuffer
+function floatTo16BitPCM(float32Array) {
+	const buffer = new ArrayBuffer(float32Array.length * 2);
+	const view = new DataView(buffer);
+	let offset = 0;
+	for (let i = 0; i < float32Array.length; i++, offset += 2) {
+		let s = Math.max(-1, Math.min(1, float32Array[i]));
+		view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+	}
+	return buffer;
+}
+
+//////////////////
+// audio-decode //
+//////////////////
+var decoder;
+const AudioBuffer = globalThis.AudioBuffer;
+
+async function decodeAudio(buf) {
+	if (!buf && !(buf.length || buf.buffer)) throw Error('Bad decode target')
+	buf = new Uint8Array(buf.buffer || buf)
+
+	if (!decoder) {
+		let module = await import('node-wav')
+		decoder = module.default.decode
+	}
+	const decoderBuffer = buf && createBuffer(await decoder(buf))
+
+	return decoderBuffer(buf)
+};
+
+function createBuffer({ channelData, sampleRate }) {
+	let audioBuffer = new AudioBuffer({
+		sampleRate,
+		length: channelData[0].length,
+		numberOfChannels: channelData.length
+	})
+	for (let ch = 0; ch < channelData.length; ch++) audioBuffer.getChannelData(ch).set(channelData[ch])
+	return audioBuffer
+}
+
 // Export all tool functions
 module.exports = {
 	activate,
@@ -460,3 +574,5 @@ module.exports = {
 	OpenFile,
 	Response,
 };
+
+

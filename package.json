@@ -23,7 +23,17 @@
         "command": "fairy.fairy",
         "title": "Fairy"
       }
-    ]
+    ],
+    "configuration": {
+			"title": "WavPreview",
+			"properties": {
+				"WavPreview.autoPlay": {
+					"type": "boolean",
+					"default": false,
+					"description": "automatically play audio file when you open it"
+				}
+			}
+		}
   },
   "scripts": {
     "lint": "eslint .",
@@ -44,8 +54,14 @@
   "dependencies": {
     "@picovoice/pvrecorder-node": "^1.2.3",
     "@ricky0123/vad-node": "^0.0.3",
+    "audio-buffer": "^5.0.0",
+    "audio-decode": "^2.2.2",
+    "audio-loader": "^1.0.3",
+    "audio-play": "^2.3.1",
+    "audio-type": "^2.2.1",
     "node-microphone": "^0.1.6",
     "openai": "^4.56.0",
-    "speech-recorder": "^2.1.0"
+    "speech-recorder": "^2.1.0",
+    "ws": "^8.18.0"
   }
 }
