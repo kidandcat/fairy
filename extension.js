@@ -77,8 +77,11 @@ function activate(context) {
 
 			window.addEventListener('message', async (event) => {
 				const { command, audioData } = event.data;
-				i.innerHTML += "<br>Received event command: " + command;
 				
+				if (command == 'transcript') {
+					i.innerHTML += audioData
+				}
+
 				if (command === 'loadAudio') {
 					try {
 						i.innerHTML += " Running loadAudio command";
@@ -167,6 +170,10 @@ function activate(context) {
 					textDelta = '';
 					break;
 				case 'response.audio_transcript.delta':
+					panel.webview.postMessage({
+						command: 'transcript',
+						audioData: msg.delta,
+					});
 					transcriptDelta += msg.delta
 					break;
 				case 'response.audio_transcript.done':
@@ -174,7 +181,7 @@ function activate(context) {
 					transcriptDelta = '';
 					break;
 				case 'response.done':
-					if (msg.response.status == 'failed'){
+					if (msg.response.status == 'failed') {
 						vscode.window.showInformationMessage(msg.response.status_details.error.message);
 					}
 					break;
@@ -189,6 +196,7 @@ function activate(context) {
 
 function deactivate() {
 	ws.close()
+	recorder.stop()
 }
 
 module.exports = {
@@ -452,40 +460,40 @@ function Response() {
 /////////////////
 // AUDIO INPUT //
 /////////////////
-var recorder
+var recorder;
 async function listen_input() {
-	if (DEBUG != '') {
-		resolve(DEBUG)
-		return
-	}
-	var data = []
-	if (!decoder) {
-		let module = await import('node-wav')
-		decoder = module.default.decode
-	}
+	console.log('Listening started')
 	recorder = new SpeechRecorder({
+		// sampleRate: 16000,  // OpenAI expects 16kHz
 		onAudio: async ({ audio }) => {
-			const wavBuffer = convertRawToWav(Buffer.from(audio.buffer));
-			const decodedwav = await decoder(wavBuffer)
-			if (!decodedwav) return;
-			let isAllZeros = true;
-			for (let i = 0; i < decodedwav.channelData[0].length; i++) {
-				if (decodedwav.channelData[0][i] !== 0) {
-					isAllZeros = false;
-					break;
-				}
+			try {
+				const audioBuffer = Buffer.from(audio.buffer);
+				ws.send(JSON.stringify({
+					type: 'input_audio_buffer.append',
+					audio: audioBuffer.toString('base64')
+				}));
+			} catch (e) {
+				console.log(e)
 			}
-			if (isAllZeros) return;
-			const base64AudioData = base64EncodeAudio(decodedwav.channelData[0]);
-			const msg = {
-				type: 'input_audio_buffer.append',
-				audio: base64AudioData
-			}
-			ws.send(JSON.stringify(msg));
 		},
 	})
-	statusBarItem.text = "Ready to listen"
 	recorder.start()
+	statusBarItem.text = "Listening..."
+}
+
+function processAudioChunk(audioChunk) {
+	// Convert to 16-bit PCM if needed
+	const pcm16Buffer = convertToPCM16(audioChunk);
+	return pcm16Buffer.toString('base64');
+}
+
+function convertToPCM16(float32Array) {
+	const pcm16 = new Int16Array(float32Array.length);
+	for (let i = 0; i < float32Array.length; i++) {
+		const s = Math.max(-1, Math.min(1, float32Array[i]));
+		pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+	}
+	return Buffer.from(pcm16.buffer);
 }
 
 function createWavHeader({ sampleRate, bitDepth, channels, dataLength }) {
