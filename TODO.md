@@ -1,3 +1,5 @@
+- Stream audio (right now we wait for the audio response to be done)
+- Remove audio artifacts
 - Change the window webview to a side panel
 - Show a big button which the user has to click to start using the extension (to allow us to output audio)
 - Do not start the WS connection until the user clicks the button (send postmessage from webview to main process)
