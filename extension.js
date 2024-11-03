@@ -1,16 +1,6 @@
 const vscode = require('vscode');
-const OpenAI = require('openai');
-const { toFile } = require('openai/uploads')
 const { SpeechRecorder } = require("speech-recorder");
 const WebSocket = require('ws')
-const play = require('audio-play');
-const load = require('audio-loader');
-
-const openai = new OpenAI({
-	apiKey: process.env.OPENAI_API_KEY,
-});
-
-const DEBUG = ''
 
 const wsurl = "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01";
 var statusBarItem
@@ -72,7 +62,36 @@ function activate(context) {
 				const source = audioContext.createBufferSource();
 				source.buffer = audioBuffer;
 				source.connect(audioContext.destination);
+				source.playbackRate.value = 1.5;
 				source.start(0);
+			}
+
+			async function playAudioBufferGranular(audioContext, audioBuffer, speedMultiplier) {
+				const grainSize = 0.1; // Duration of each grain in seconds (100ms is a good start)
+				const overlap = 0.05; // Overlap between grains in seconds (50ms overlap is common)
+
+				for (let offset = 0; offset < audioBuffer.duration; offset += grainSize - overlap) {
+					// Create a new buffer source for each grain
+					const source = audioContext.createBufferSource();
+					source.buffer = audioBuffer;
+
+					// Define the start and end of each grain
+					const grainStart = offset;
+					const grainEnd = Math.min(offset + grainSize, audioBuffer.duration);
+					
+					// Keep playbackRate at 1.0 to preserve pitch
+					source.playbackRate.value = 1.5;
+					
+					// Start the grain at the defined offset
+					source.start(audioContext.currentTime, grainStart, grainEnd - grainStart);
+
+					// Connect the grain to the audio output
+					source.connect(audioContext.destination);
+
+					// Adjust the delay between grains based on speedMultiplier
+					const adjustedGrainInterval = (grainSize - overlap) / speedMultiplier;
+					await new Promise(resolve => setTimeout(resolve, adjustedGrainInterval * 1000));
+				}
 			}
 
 			window.addEventListener('message', async (event) => {
@@ -83,17 +102,13 @@ function activate(context) {
 				}
 
 				if (command === 'loadAudio') {
-					try {
-						i.innerHTML += " Running loadAudio command";
-						
+					try {						
 						// Decode base64 string to ArrayBuffer
 						const arrayBuffer = base64ToArrayBuffer(audioData);
-						i.innerHTML += "<br>Decoded ArrayBuffer length: " + arrayBuffer.byteLength;
-						
 						const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
-						playAudioBuffer(audioContext, audioBuffer);
-
-						i.innerHTML += "<br>Audio loaded and ready to play. Unmute and play using the controls below.";
+						i.innerHTML += '<br>'
+						await playAudioBufferGranular(audioContext, audioBuffer, 2.5);
+						// playAudioBuffer(audioContext, audioBuffer);
 					} catch(e) {
 						i.innerHTML += ' Exception: ' + (e.message || e);
 					}
@@ -113,29 +128,21 @@ function activate(context) {
 	ws.on("open", function open() {
 		ws.send(JSON.stringify({
 			type: "session.update",
-			modalities: ["text", "audio"],
-			output_audio_format: "pcm16",
 			session: {
+				output_audio_format: "pcm16",
 				instructions: `
 					You are an assistant to help the user control their code editor with their voice.
 					You have available functions to control the editor.
 					Talk quickly and concisely.
-					Always give audio feedback if you received any input.
-				`,
-				tools: [
-					ModifyCode(),
-					Save(),
-					FocusLines(),
-					ListFiles(),
-					FindFiles(),
-					OpenFile(),
-				]
+					You should always call a function if you can.
+
+					If you understood these instructions, answer with READY.`,
+				tools: Object.values(tools).map(t => t().function)
 			}
 		}));
 		ws.send(JSON.stringify({
 			type: "response.create",
 			response: {
-				modalities: ["text"],
 				instructions: ".",
 			}
 		}));
@@ -185,6 +192,34 @@ function activate(context) {
 						vscode.window.showInformationMessage(msg.response.status_details.error.message);
 					}
 					break;
+				case 'error':
+					vscode.window.showInformationMessage(msg.error.message)
+					break;
+				case 'response.function_call_arguments.done':
+					vscode.window.showInformationMessage(msg.name + '(' + msg.arguments + ')');
+					var output = ''
+					try {
+						output = await tools[msg.name]().function.function(JSON.parse(msg.arguments));
+					} catch (e) {
+						output = e.message || e
+					}
+					const msgout = {
+						type: "conversation.item.create",
+						item: {
+							type: "function_call_output",
+							call_id: msg.call_id,
+							output
+						}
+					}
+					ws.send(JSON.stringify(msgout));
+					setTimeout(() => {
+						ws.send(JSON.stringify({
+							type: "response.create",
+							response: {
+								modalities: ["text", "audio"],
+							}
+						}));
+					}, 100);
 				default:
 					break;
 			}
@@ -214,7 +249,18 @@ function add_lines(content) {
 	return numbered_lines.join('\n')
 }
 
-
+function add_lines_around(content, line, margin) {
+	var lines = content.split('\n')
+	var numbered_lines = []
+	for (var i = 1; i <= lines.length; i++) {
+		numbered_lines.push(i.toString() + ' ' + lines[i])
+	}
+	// if the line is 8 and the margin is 2, then we want to add lines 6 to 10
+	var start = Math.max(1, line - margin)
+	var end = Math.min(lines.length, line + margin)
+	numbered_lines = numbered_lines.slice(start - 1, end)
+	return numbered_lines.join('\n')
+}
 
 function content() {
 	var content = vscode.window.activeTextEditor.document.getText()
@@ -236,30 +282,67 @@ function content() {
 // boolean
 // null
 
-function ModifyCode() {
+const tools = {
+	ReplaceCode,
+	Save,
+	FocusLines,
+	ListFiles,
+	FindFiles,
+	OpenFile,
+	OpenFile,
+	FileContent,
+}
+
+function ReplaceCode() {
 	return {
 		type: 'function',
 		function: {
-			name: 'ModifyCode',
-			description: 'Modify the code using AI',
+			name: 'ReplaceCode',
+			type: 'function',
+			description: 'Replace code at a specific line',
 			parse: JSON.parse,
 			parameters: {
 				type: 'object',
 				properties: {
-					input: {
+					line: {
+						type: 'number',
+						description: 'Line number to replace',
+					},
+					code: {
 						type: 'string',
-						description: 'The requested modification (do not include code)',
+						description: 'Code to replace with',
 					},
 				},
 			},
-			function: async ({ input }) => {
-				// run aipopup.action.modal.generate command
-				vscode.commands.executeCommand('aipopup.action.modal.generate', input)
+			function: async ({ line, code }) => {
+				const start = new vscode.Position(line-1, 0)
+				const end = new vscode.Position(line, 0)
+				await vscode.window.activeTextEditor.edit(editBuilder => {
+					editBuilder.replace(new vscode.Range(start, end), code + '\n')
+				})
+				statusBarItem.text = "Replaced code at line " + line
+				const content = vscode.window.activeTextEditor.document.getText()
+				return vscode.window.activeTextEditor.document.uri + ':\n' + add_lines_around(content, line, 5)
+			},
+		},
+	};
+}
 
-				// Get the updated content of the first 3 lines
-				const document = vscode.window.activeTextEditor.document
-				const updatedContent = document.getText().split('\n').slice(0, 3).join('\n');
-				return `${document.uri.toString()}:\n${updatedContent}`;
+function FileContent() {
+	return {
+		type: 'function',
+		function: {
+			name: 'FileContent',
+			type: 'function',
+			description: 'Get the content of the currently focused file',
+			parse: JSON.parse,
+			parameters: {
+				type: 'object',
+				properties: {},
+			},
+			function: async () => {
+				const content = vscode.window.activeTextEditor.document.getText()
+				return vscode.window.activeTextEditor.document.uri + ':\n' + add_lines(content)
 			},
 		},
 	};
@@ -270,6 +353,7 @@ function Save() {
 		type: 'function',
 		function: {
 			name: 'Save',
+			type: 'function',
 			description: 'Save the file',
 			parse: JSON.parse,
 			parameters: {
@@ -290,6 +374,7 @@ function DeleteLines() {
 		type: 'function',
 		function: {
 			name: 'DeleteLines',
+			type: 'function',
 			description: 'Delete lines',
 			parse: JSON.parse,
 			parameters: {
@@ -312,7 +397,7 @@ function DeleteLines() {
 					editBuilder.delete(new vscode.Range(startPos, endPos))
 				})
 				statusBarItem.text = `Deleted lines ${start + 1} to ${end + 1}`
-				return vscode.window.activeTextEditor.document.uri + ':\n' + content()
+				return vscode.window.activeTextEditor.document.uri + ':\n' + add_lines_around(content(), start, 5)
 			},
 		},
 	};
@@ -323,6 +408,7 @@ function FocusLines() {
 		type: 'function',
 		function: {
 			name: 'FocusLines',
+			type: 'function',
 			description: 'Show a range of lines at the center of the screen',
 			parse: JSON.parse,
 			parameters: {
@@ -338,7 +424,7 @@ function FocusLines() {
 					},
 				},
 			},
-			function: ({ start, end }) => {
+			function: async ({ start, end }) => {
 				statusBarItem.text = `Focusing on lines ${start + 1} to ${end + 1}`
 				vscode.window.activeTextEditor.revealRange(new vscode.Range(start + 1, 0, end + 1, 0), vscode.TextEditorRevealType.InCenter)
 				return `Focused on lines ${start + 1} to ${end + 1}`
@@ -352,13 +438,14 @@ function ListFiles() {
 		type: 'function',
 		function: {
 			name: 'ListFiles',
+			type: 'function',
 			description: 'List files in the current workspace',
 			parse: JSON.parse,
 			parameters: {
 				type: 'object',
 				properties: {},
 			},
-			function: () => {
+			function: async () => {
 				const files = vscode.workspace.textDocuments.map(doc => doc.uri.toString())
 				var files_list = files.join('\n')
 				if (files_list.length > 1000000) {
@@ -376,6 +463,7 @@ function FindFiles() {
 		type: 'function',
 		function: {
 			name: 'FindFiles',
+			type: 'function',
 			description: 'Find files in the current workspace based on a provided glob pattern',
 			parse: JSON.parse,
 			parameters: {
@@ -394,6 +482,7 @@ function FindFiles() {
 					files_list = files_list.substring(0, 1000000)
 				}
 				statusBarItem.text = "FindFiles"
+				if (files_list == '') return ListFiles().function.function()
 				return files_list
 			},
 		},
@@ -405,6 +494,7 @@ function OpenFile() {
 		type: 'function',
 		function: {
 			name: 'OpenFile',
+			type: 'function',
 			description: 'Open a file in the editor based on a provided uri',
 			parse: JSON.parse,
 			parameters: {
@@ -436,6 +526,7 @@ function Response() {
 		type: 'function',
 		function: {
 			name: 'Response',
+			type: 'function',
 			description: 'Tell something to the user',
 			parse: JSON.parse,
 			parameters: {
@@ -481,21 +572,6 @@ async function listen_input() {
 	statusBarItem.text = "Listening..."
 }
 
-function processAudioChunk(audioChunk) {
-	// Convert to 16-bit PCM if needed
-	const pcm16Buffer = convertToPCM16(audioChunk);
-	return pcm16Buffer.toString('base64');
-}
-
-function convertToPCM16(float32Array) {
-	const pcm16 = new Int16Array(float32Array.length);
-	for (let i = 0; i < float32Array.length; i++) {
-		const s = Math.max(-1, Math.min(1, float32Array[i]));
-		pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
-	}
-	return Buffer.from(pcm16.buffer);
-}
-
 function createWavHeader({ sampleRate, bitDepth, channels, dataLength }) {
 	const header = Buffer.alloc(44);
 
@@ -536,64 +612,10 @@ function convertRawToWav(rawAudioBuffer) {
 	return Buffer.concat([wavHeader, rawAudioBuffer]);
 }
 
-// Converts a Float32Array to base64-encoded PCM16 data
-function base64EncodeAudio(float32Array) {
-	const arrayBuffer = floatTo16BitPCM(float32Array);
-	let binary = '';
-	let bytes = new Uint8Array(arrayBuffer);
-	const chunkSize = 0x8000; // 32KB chunk size
-	for (let i = 0; i < bytes.length; i += chunkSize) {
-		let chunk = bytes.subarray(i, i + chunkSize);
-		binary += String.fromCharCode.apply(null, chunk);
-	}
-	return btoa(binary);
-}
-
-// Converts Float32Array of audio data to PCM16 ArrayBuffer
-function floatTo16BitPCM(float32Array) {
-	const buffer = new ArrayBuffer(float32Array.length * 2);
-	const view = new DataView(buffer);
-	let offset = 0;
-	for (let i = 0; i < float32Array.length; i++, offset += 2) {
-		let s = Math.max(-1, Math.min(1, float32Array[i]));
-		view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7fff, true);
-	}
-	return buffer;
-}
-
-//////////////////
-// audio-decode //
-//////////////////
-var decoder;
-const AudioBuffer = globalThis.AudioBuffer;
-
-async function decodeAudio(buf) {
-	if (!buf && !(buf.length || buf.buffer)) throw Error('Bad decode target')
-	buf = new Uint8Array(buf.buffer || buf)
-
-	if (!decoder) {
-		let module = await import('node-wav')
-		decoder = module.default.decode
-	}
-	const decoderBuffer = buf && createBuffer(await decoder(buf))
-
-	return decoderBuffer(buf)
-};
-
-function createBuffer({ channelData, sampleRate }) {
-	let audioBuffer = new AudioBuffer({
-		sampleRate,
-		length: channelData[0].length,
-		numberOfChannels: channelData.length
-	})
-	for (let ch = 0; ch < channelData.length; ch++) audioBuffer.getChannelData(ch).set(channelData[ch])
-	return audioBuffer
-}
-
 // Export all tool functions
 module.exports = {
 	activate,
-	ModifyCode,
+	ReplaceCode,
 	Save,
 	DeleteLines,
 	FocusLines,
