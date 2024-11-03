@@ -1,0 +1,7 @@
+- Change the window webview to a side panel
+- Show a big button which the user has to click to start using the extension (to allow us to output audio)
+- Do not start the WS connection until the user clicks the button (send postmessage from webview to main process)
+- Big feedback indicator green/red, red when we reach rate limit
+- Do not send big files with FileContent (easy to reach rate limit), send only partial file
+- Add a new function to get a summary of a file (functions and top level scope items, like CMD+Shift+o)
+- After a function usage, when we send a `response.create`, tell the model to review and rectify if it did not followed the orders properly
