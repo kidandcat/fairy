@@ -4,29 +4,24 @@ const WebSocket = require('ws')
 
 const wsurl = "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01";
 var statusBarItem
-var panel;
 var ws;
 
-/**
- * @param {vscode.ExtensionContext} context
- */
-function activate(context) {
-	console.log('Fairy is now active!');
+class MyWebviewViewProvider {
+	constructor(context) {
+		this.context = context;
+	}
 
-	// create a new status bar item that we can now manage
-	statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
-	statusBarItem.command = 'fairy.fairy';
-	statusBarItem.text = 'Fairy ready';
-	statusBarItem.show();
-	context.subscriptions.push(statusBarItem);
+	resolveWebviewView(webviewView, context, token) {
+		this.webview = webviewView.webview;
+		webviewView.webview.options = {
+			enableScripts: true,
+			retainContextWhenHidden: true
+		};
+		webviewView.webview.html = this.getHtmlForWebview(webviewView.webview);
+	}
 
-	panel = vscode.window.createWebviewPanel(
-		'audioPlayer',
-		'Audio Player',
-		vscode.ViewColumn.One,
-		{ enableScripts: true, }
-	);
-	panel.webview.html = `<!DOCTYPE html>
+	getHtmlForWebview(webview) {
+		return `<!DOCTYPE html>
 	<html lang="en">
 		<head>
 		<meta charset="UTF-8">
@@ -34,7 +29,7 @@ function activate(context) {
 		</head>
 		<body>
 		<div id="info"></div>
-		<button onclick="start()">START</button>
+		<button onclick="start()" disabled>START</button>
 
 		<script>
 			const vscode = acquireVsCodeApi();
@@ -76,7 +71,7 @@ function activate(context) {
 					const grainEnd = Math.min(offset + grainSize, audioBuffer.duration);
 					
 					// Keep playbackRate at 1.0 to preserve pitch
-					source.playbackRate.value = 1.5;
+					source.playbackRate.value = 1.4;
 					
 					// Start the grain at the defined offset
 					source.start(audioContext.currentTime, grainStart, grainEnd - grainStart);
@@ -94,6 +89,10 @@ function activate(context) {
 			const buffer = [];
 			window.addEventListener('message', async (event) => {
 				const { command } = event.data;
+
+				if (command == 'connected') {
+					button.disabled = false;
+				}
 				
 				if (command == 'transcript') {
 					const { audioData } = event.data;
@@ -111,7 +110,7 @@ function activate(context) {
 						if (!playing) {
 							playing = true;
 							while (buffer.length > 0) {
-								await playAudioBufferGranular(audioContext, buffer.shift(), 2.5);
+								await playAudioBufferGranular(audioContext, buffer.shift(), 2.0);
 							}
 							playing = false;
 						}
@@ -123,6 +122,26 @@ function activate(context) {
 		</script>
 		</body>
 	</html>`;
+	}
+}
+
+/**
+ * @param {vscode.ExtensionContext} context
+ */
+function activate(context) {
+	console.log('Fairy is now active!');
+
+	// create a new status bar item that we can now manage
+	statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
+	statusBarItem.command = 'fairy.fairy';
+	statusBarItem.text = 'Fairy ready';
+	statusBarItem.show();
+	context.subscriptions.push(statusBarItem);
+
+	const provider = new MyWebviewViewProvider(context);
+	context.subscriptions.push(
+		vscode.window.registerWebviewViewProvider('fairy.audioPlayer', provider)
+	);
 
 	ws = new WebSocket(wsurl, {
 		headers: {
@@ -131,7 +150,15 @@ function activate(context) {
 		},
 	});
 
-	ws.on("open", function open() {
+	ws.on("open", async function open() {
+		while(!provider.webview){
+			await new Promise(resolve => setTimeout(resolve, 500));
+		}
+
+		provider.webview.postMessage({
+			command: 'connected',
+		});
+
 		ws.send(JSON.stringify({
 			type: "session.update",
 			session: {
@@ -147,7 +174,7 @@ function activate(context) {
 			}
 		}));
 
-		panel.webview.onDidReceiveMessage(({ command }) => {
+		provider.webview.onDidReceiveMessage(({ command }) => {
 			console.log('|<<<', command)
 			if (command == 'ready') {
 				ws.send(JSON.stringify({
@@ -172,11 +199,11 @@ function activate(context) {
 				case 'response.audio.delta':
 					audioDelta.push(Buffer.from(msg.delta, 'base64'));
 					if (audioDelta.length > 10) {
-						process_audio(audioDelta);
+						process_audio(provider.webview, audioDelta);
 					}
 					break;
 				case 'response.audio.done':
-					process_audio(audioDelta);
+					process_audio(provider.webview, audioDelta);
 					break;
 				case 'response.text.delta':
 					textDelta += msg.delta
@@ -186,7 +213,7 @@ function activate(context) {
 					textDelta = '';
 					break;
 				case 'response.audio_transcript.delta':
-					panel.webview.postMessage({
+					provider.webview.postMessage({
 						command: 'transcript',
 						audioData: msg.delta,
 					});
@@ -248,11 +275,12 @@ module.exports = {
 	deactivate
 }
 
-function process_audio(audioDelta) {
+function process_audio(webview, audioDelta) {
+	if(!audioDelta) return;
 	const delta = audioDelta.splice(0, 10)
 	const audioBuffer = Buffer.concat(delta);
 	const wavBuffer = convertRawToWav(audioBuffer);
-	panel.webview.postMessage({
+	webview.postMessage({
 		command: 'loadAudio',
 		audioData: wavBuffer.toString('base64'),
 	});
@@ -306,8 +334,7 @@ const tools = {
 	Save,
 	FocusLines,
 	ListFiles,
-	FindFiles,
-	OpenFile,
+	// FindFiles,
 	OpenFile,
 	FileContent,
 }
@@ -341,7 +368,9 @@ function ReplaceCode() {
 				})
 				statusBarItem.text = "Replaced code at line " + line
 				const content = vscode.window.activeTextEditor.document.getText()
-				return vscode.window.activeTextEditor.document.uri + ':\n' + add_lines_around(content, line, 5)
+				const response = vscode.window.activeTextEditor.document.uri + ':\n' + add_lines_around(content, line, 5)
+				console.log('ReplaceCode(' + line + '):', response)
+				return response
 			},
 		},
 	};
@@ -465,12 +494,13 @@ function ListFiles() {
 				properties: {},
 			},
 			function: async () => {
-				const files = vscode.workspace.textDocuments.map(doc => doc.uri.toString())
-				var files_list = files.join('\n')
+				const files = await vscode.workspace.findFiles('**/*')
+				var files_list = files.map(file => file.toString()).join('\n')
 				if (files_list.length > 1000000) {
 					files_list = files_list.substring(0, 1000000)
 				}
-				statusBarItem.text = "Listed files"
+				statusBarItem.text = "ListFiles"
+				if (files_list == '') return ListFiles().function.function()
 				return files_list
 			},
 		},

@@ -18,21 +18,14 @@
   ],
   "main": "./extension.js",
   "contributes": {
-    "commands": [
-      {
-        "command": "fairy.fairy",
-        "title": "Fairy"
-      }
-    ],
-    "configuration": {
-      "title": "WavPreview",
-      "properties": {
-        "WavPreview.autoPlay": {
-          "type": "boolean",
-          "default": false,
-          "description": "automatically play audio file when you open it"
+    "views": {
+      "explorer": [
+        {
+          "type": "webview",
+          "id": "fairy.audioPlayer",
+          "name": "AI Player"
         }
-      }
+      ]
     }
   },
   "scripts": {
