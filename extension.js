@@ -37,6 +37,7 @@ function activate(context) {
 		<button onclick="start()">START</button>
 
 		<script>
+			const vscode = acquireVsCodeApi();
 			var audioContext;
 			const i = document.querySelector('#info');
 			const button = document.querySelector('button');
@@ -56,14 +57,9 @@ function activate(context) {
 					sampleRate: 16000
 				});
 				button.style.display = 'none';
-			}
-
-			function playAudioBuffer(audioContext, audioBuffer) {
-				const source = audioContext.createBufferSource();
-				source.buffer = audioBuffer;
-				source.connect(audioContext.destination);
-				source.playbackRate.value = 1.5;
-				source.start(0);
+				vscode.postMessage({
+					command: 'ready',
+				});
 			}
 
 			async function playAudioBufferGranular(audioContext, audioBuffer, speedMultiplier) {
@@ -94,21 +90,31 @@ function activate(context) {
 				}
 			}
 
+			var playing = false;
+			const buffer = [];
 			window.addEventListener('message', async (event) => {
-				const { command, audioData } = event.data;
+				const { command } = event.data;
 				
 				if (command == 'transcript') {
+					const { audioData } = event.data;
 					i.innerHTML += audioData
 				}
 
 				if (command === 'loadAudio') {
+					const { audioData } = event.data;
+					if (!audioContext) return;
 					try {						
 						// Decode base64 string to ArrayBuffer
 						const arrayBuffer = base64ToArrayBuffer(audioData);
 						const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
-						i.innerHTML += '<br>'
-						await playAudioBufferGranular(audioContext, audioBuffer, 2.5);
-						// playAudioBuffer(audioContext, audioBuffer);
+						buffer.push(audioBuffer);
+						if (!playing) {
+							playing = true;
+							while (buffer.length > 0) {
+								await playAudioBufferGranular(audioContext, buffer.shift(), 2.5);
+							}
+							playing = false;
+						}
 					} catch(e) {
 						i.innerHTML += ' Exception: ' + (e.message || e);
 					}
@@ -140,13 +146,19 @@ function activate(context) {
 				tools: Object.values(tools).map(t => t().function)
 			}
 		}));
-		ws.send(JSON.stringify({
-			type: "response.create",
-			response: {
-				instructions: ".",
+
+		panel.webview.onDidReceiveMessage(({ command }) => {
+			console.log('|<<<', command)
+			if (command == 'ready') {
+				ws.send(JSON.stringify({
+					type: "response.create",
+					response: {
+						instructions: ".",
+					}
+				}));
+				listen_input();
 			}
-		}));
-		listen_input();
+		}, undefined, context.subscriptions);
 	});
 
 	var transcriptDelta = '';
@@ -159,15 +171,12 @@ function activate(context) {
 			switch (msg.type) {
 				case 'response.audio.delta':
 					audioDelta.push(Buffer.from(msg.delta, 'base64'));
+					if (audioDelta.length > 10) {
+						process_audio(audioDelta);
+					}
 					break;
 				case 'response.audio.done':
-					const audioBuffer = Buffer.concat(audioDelta);
-					const wavBuffer = convertRawToWav(audioBuffer);
-					panel.webview.postMessage({
-						command: 'loadAudio',
-						audioData: wavBuffer.toString('base64'),
-					});
-					audioDelta = [];
+					process_audio(audioDelta);
 					break;
 				case 'response.text.delta':
 					textDelta += msg.delta
@@ -237,6 +246,16 @@ function deactivate() {
 module.exports = {
 	activate,
 	deactivate
+}
+
+function process_audio(audioDelta) {
+	const delta = audioDelta.splice(0, 10)
+	const audioBuffer = Buffer.concat(delta);
+	const wavBuffer = convertRawToWav(audioBuffer);
+	panel.webview.postMessage({
+		command: 'loadAudio',
+		audioData: wavBuffer.toString('base64'),
+	});
 }
 
 function add_lines(content) {
@@ -315,7 +334,7 @@ function ReplaceCode() {
 				},
 			},
 			function: async ({ line, code }) => {
-				const start = new vscode.Position(line-1, 0)
+				const start = new vscode.Position(line - 1, 0)
 				const end = new vscode.Position(line, 0)
 				await vscode.window.activeTextEditor.edit(editBuilder => {
 					editBuilder.replace(new vscode.Range(start, end), code + '\n')
@@ -555,14 +574,16 @@ var recorder;
 async function listen_input() {
 	console.log('Listening started')
 	recorder = new SpeechRecorder({
-		// sampleRate: 16000,  // OpenAI expects 16kHz
-		onAudio: async ({ audio }) => {
+		sampleRate: 16000,  // OpenAI expects 16kHz
+		onAudio: async ({ audio, speaking }) => {
 			try {
-				const audioBuffer = Buffer.from(audio.buffer);
-				ws.send(JSON.stringify({
-					type: 'input_audio_buffer.append',
-					audio: audioBuffer.toString('base64')
-				}));
+				if (speaking) {
+					console.log('input_audio_buffer.append')
+					ws.send(JSON.stringify({
+						type: 'input_audio_buffer.append',
+						audio: Buffer.from(audio.buffer).toString('base64')
+					}));
+				}
 			} catch (e) {
 				console.log(e)
 			}
@@ -611,6 +632,7 @@ function convertRawToWav(rawAudioBuffer) {
 
 	return Buffer.concat([wavHeader, rawAudioBuffer]);
 }
+
 
 // Export all tool functions
 module.exports = {
